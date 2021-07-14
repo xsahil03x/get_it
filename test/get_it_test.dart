@@ -5,6 +5,10 @@ int constructorCounter = 0;
 int disposeCounter = 0;
 int errorCounter = 0;
 
+class TestBaseClassGeneric<T> {}
+
+class TestClassGeneric<T> implements TestBaseClassGeneric<T> {}
+
 abstract class TestBaseClass {}
 
 class TestClass extends TestBaseClass {
@@ -16,6 +20,20 @@ class TestClass extends TestBaseClass {
   }
 }
 
+class TestClassDisposable extends TestBaseClass with Disposable {
+  TestClassDisposable() {
+    constructorCounter++;
+  }
+  void dispose() {
+    disposeCounter++;
+  }
+
+  @override
+  void onDispose() {
+    dispose();
+  }
+}
+
 class TestClass2 {}
 
 class TestClass3 {}
@@ -23,8 +41,8 @@ class TestClass3 {}
 class TestClass4 {}
 
 class TestClassParam {
-  final String param1;
-  final int param2;
+  final String? param1;
+  final int? param2;
 
   TestClassParam({this.param1, this.param2});
 }
@@ -46,7 +64,7 @@ void main() {
 
     //final instance1 = getIt.get<TestBaseClass>();
 
-    final instance1 = getIt<TestBaseClass>();
+    final TestBaseClass instance1 = getIt<TestBaseClass>();
 
     expect(instance1 is TestClass, true);
 
@@ -77,6 +95,22 @@ void main() {
     expect(instance2.param1, '123');
   });
 
+  test('register factory with one nullable Param', () {
+    final getIt = GetIt.instance;
+
+    constructorCounter = 0;
+    getIt.registerFactoryParam<TestClassParam, String?, void>(
+        (s, _) => TestClassParam(param1: s));
+
+    final instance1 = getIt<TestClassParam>(param1: 'abc');
+    final instance2 = getIt<TestClassParam>(param1: null);
+
+    expect(instance1 is TestClassParam, true);
+    expect(instance1.param1, 'abc');
+    expect(instance2 is TestClassParam, true);
+    expect(instance2.param1, null);
+  });
+
   test('register factory with two Params', () {
     final getIt = GetIt.instance;
 
@@ -97,6 +131,24 @@ void main() {
     expect(instance2.param2, 5);
   });
 
+  test('register factory with two nullable Params', () {
+    final getIt = GetIt.instance;
+
+    constructorCounter = 0;
+    getIt.registerFactoryParam<TestClassParam, String?, int?>(
+        (s, i) => TestClassParam(param1: s, param2: i));
+
+    final instance1 = getIt<TestClassParam>(param1: 'abc', param2: 3);
+    final instance2 = getIt<TestClassParam>();
+
+    expect(instance1 is TestClassParam, true);
+    expect(instance1.param1, 'abc');
+    expect(instance1.param2, 3);
+    expect(instance2 is TestClassParam, true);
+    expect(instance2.param1, null);
+    expect(instance2.param2, null);
+  });
+
   test('register factory with Params with wrong type', () {
     final getIt = GetIt.instance;
 
@@ -108,11 +160,23 @@ void main() {
         throwsA(const TypeMatcher<TypeError>()));
   });
 
+  test('register factory with Params with non-nullable type but not pass it',
+      () {
+    final getIt = GetIt.instance;
+
+    constructorCounter = 0;
+    getIt.registerFactoryParam<TestClassParam, String, int>(
+        (s, i) => TestClassParam(param1: s, param2: i));
+
+    expect(() => getIt.get<TestClassParam>(param2: '3'),
+        throwsA(const TypeMatcher<TypeError>()));
+  });
+
   test('register factory with access as singleton', () {
     constructorCounter = 0;
     GetIt.instance.registerFactory<TestBaseClass>(() => TestClass());
 
-    final instance1 = GetIt.I<TestBaseClass>();
+    final TestBaseClass instance1 = GetIt.I<TestBaseClass>();
 
     expect(instance1 is TestClass, true);
 
@@ -161,6 +225,19 @@ void main() {
     expect(destructorCounter, 1);
   });
 
+  test('reset which Disposable Interface', () async {
+    disposeCounter = 0;
+    final getIt = GetIt.instance;
+
+    getIt.registerSingleton<TestBaseClass>(TestClassDisposable());
+
+    await getIt.reset();
+    expect(() => getIt.get<TestClass>(),
+        throwsA(const TypeMatcher<AssertionError>()));
+
+    expect(disposeCounter, 1);
+  });
+
   test('register lazySingleton', () {
     final getIt = GetIt.instance;
     constructorCounter = 0;
@@ -197,7 +274,7 @@ void main() {
     constructorCounter = 0;
     getIt.registerFactory(() => TestClass(), instanceName: 'FactoryByName');
 
-    final instance1 = getIt<TestClass>(instanceName: 'FactoryByName');
+    final TestClass instance1 = getIt<TestClass>(instanceName: 'FactoryByName');
 
     expect(instance1 is TestClass, true);
 
@@ -217,7 +294,8 @@ void main() {
 
     getIt.registerSingleton(TestClass(), instanceName: 'ConstantByName');
 
-    final instance1 = getIt<TestClass>(instanceName: 'ConstantByName');
+    final TestClass instance1 =
+        getIt<TestClass>(instanceName: 'ConstantByName');
 
     expect(instance1 is TestClass, true);
 
@@ -237,12 +315,14 @@ void main() {
 
     expect(constructorCounter, 0);
 
-    final instance1 = getIt<TestBaseClass>(instanceName: 'LazyByName');
+    final TestBaseClass instance1 =
+        getIt<TestBaseClass>(instanceName: 'LazyByName');
 
     expect(instance1 is TestClass, true);
     expect(constructorCounter, 1);
 
-    final instance2 = getIt<TestBaseClass>(instanceName: 'LazyByName');
+    final TestBaseClass instance2 =
+        getIt<TestBaseClass>(instanceName: 'LazyByName');
 
     expect(instance1, instance2);
 
@@ -257,7 +337,7 @@ void main() {
     GetIt.instance.registerLazySingleton<TestBaseClass>(() => TestClass());
     secondGetIt.registerLazySingleton<TestBaseClass>(() => TestClass());
 
-    final instance1 = GetIt.I<TestBaseClass>();
+    final TestBaseClass instance1 = GetIt.I<TestBaseClass>();
 
     expect(instance1 is TestClass, true);
 
@@ -282,10 +362,124 @@ void main() {
     GetIt.I.reset();
   });
 
-  test('reset lazySingleton', () {
+  test('reset lazy Singleton when the disposing function is a future',
+      () async {
     final getIt = GetIt.instance;
+    disposeCounter = 0;
     constructorCounter = 0;
     getIt.registerLazySingleton<TestBaseClass>(() => TestClass());
+
+    expect(constructorCounter, 0);
+
+    final instance1 = getIt.get<TestBaseClass>();
+
+    expect(instance1 is TestClass, true);
+    expect(constructorCounter, 1);
+
+    final instance2 = getIt.get<TestBaseClass>();
+
+    expect(instance1, instance2);
+
+    expect(constructorCounter, 1);
+
+    await GetIt.I.resetLazySingleton<TestBaseClass>(
+        disposingFunction: (dynamic testClass) async {
+      await Future.value(testClass.dispose());
+    });
+
+    final instance3 = getIt.get<TestBaseClass>();
+
+    expect(instance3 is TestClass, true);
+
+    expect(instance1, isNot(instance3));
+
+    expect(constructorCounter, 2);
+
+    GetIt.I.reset();
+  });
+
+  test('reset lazy Singleton when the disposing function is not a future',
+      () async {
+    final getIt = GetIt.instance;
+
+    disposeCounter = 0;
+    constructorCounter = 0;
+    getIt.registerLazySingleton<TestClass>(() => TestClass());
+
+    expect(constructorCounter, 0);
+
+    final instance1 = getIt.get<TestClass>();
+
+    expect(instance1 is TestClass, true);
+    expect(constructorCounter, 1);
+
+    final instance2 = getIt.get<TestClass>();
+
+    expect(instance1, instance2);
+
+    expect(constructorCounter, 1);
+
+    GetIt.I
+        .resetLazySingleton<TestClass>(disposingFunction: (x) => x.dispose());
+
+    final instance3 = getIt.get<TestClass>();
+
+    expect(disposeCounter, 1);
+
+    expect(instance3 is TestClass, true);
+
+    expect(instance1, isNot(instance3));
+
+    expect(constructorCounter, 2);
+
+    GetIt.I.reset();
+  });
+
+  test('reset lazy Singleton when the dispose of the register is a future',
+      () async {
+    final getIt = GetIt.instance;
+    disposeCounter = 0;
+    constructorCounter = 0;
+    getIt.registerLazySingleton<TestBaseClass>(() => TestClass(),
+        dispose: (dynamic testClassBase) async {
+      await Future.value(testClassBase.dispose());
+    });
+
+    expect(constructorCounter, 0);
+
+    final instance1 = getIt.get<TestBaseClass>();
+
+    expect(instance1 is TestClass, true);
+    expect(constructorCounter, 1);
+
+    final instance2 = getIt.get<TestBaseClass>();
+
+    expect(instance1, instance2);
+
+    expect(constructorCounter, 1);
+
+    await GetIt.I.resetLazySingleton<TestBaseClass>();
+
+    final instance3 = getIt.get<TestBaseClass>();
+
+    expect(disposeCounter, 1);
+
+    expect(instance3 is TestClass, true);
+
+    expect(instance1, isNot(instance3));
+
+    expect(constructorCounter, 2);
+
+    GetIt.I.reset();
+  });
+
+  test('reset lazy Singleton when the dispose of the register is not a future',
+      () async {
+    final getIt = GetIt.instance;
+    disposeCounter = 0;
+    constructorCounter = 0;
+    getIt.registerLazySingleton<TestBaseClass>(() => TestClass(),
+        dispose: (dynamic testClassBase) => testClassBase.dispose());
 
     expect(constructorCounter, 0);
 
@@ -304,6 +498,8 @@ void main() {
 
     final instance3 = getIt.get<TestBaseClass>();
 
+    expect(disposeCounter, 1);
+
     expect(instance3 is TestClass, true);
 
     expect(instance1, isNot(instance3));
@@ -313,7 +509,64 @@ void main() {
     GetIt.I.reset();
   });
 
-  test('unregister by instance', () {
+  test('unregister by instance when the dispose of the register is a future',
+      () async {
+    final getIt = GetIt.instance;
+    disposeCounter = 0;
+    constructorCounter = 0;
+
+    getIt.registerSingleton<TestClass>(TestClass(),
+        dispose: (dynamic testClass) async =>
+            Future.value(testClass.dispose()));
+
+    final instance1 = getIt.get<TestClass>();
+
+    expect(instance1 is TestClass, true);
+
+    final instance2 = getIt.get<TestClass>();
+
+    expect(instance1, instance2);
+
+    expect(constructorCounter, 1);
+
+    await getIt.unregister(instance: instance2);
+
+    expect(disposeCounter, 1);
+
+    expect(() => getIt.get<TestClass>(),
+        throwsA(const TypeMatcher<AssertionError>()));
+  });
+
+  test(
+      'unregister by instance when the dispose of the register is not a future',
+      () async {
+    final getIt = GetIt.instance;
+    disposeCounter = 0;
+    constructorCounter = 0;
+
+    getIt.registerSingleton<TestClass>(TestClass(),
+        dispose: (dynamic testClass) => testClass.dispose());
+
+    final instance1 = getIt.get<TestClass>();
+
+    expect(instance1 is TestClass, true);
+
+    final instance2 = getIt.get<TestClass>();
+
+    expect(instance1, instance2);
+
+    expect(constructorCounter, 1);
+
+    getIt.unregister(instance: instance2);
+
+    expect(disposeCounter, 1);
+
+    expect(() => getIt.get<TestClass>(),
+        throwsA(const TypeMatcher<AssertionError>()));
+  });
+
+  test('unregister by instance when the disposing function is not a future',
+      () async {
     final getIt = GetIt.instance;
     disposeCounter = 0;
     constructorCounter = 0;
@@ -332,7 +585,7 @@ void main() {
 
     getIt.unregister(
         instance: instance2,
-        disposingFunction: (testClass) {
+        disposingFunction: (dynamic testClass) {
           testClass.dispose();
         });
 
@@ -342,7 +595,8 @@ void main() {
         throwsA(const TypeMatcher<AssertionError>()));
   });
 
-  test('unregister by type', () {
+  test('unregister by instance when the disposing function is a future',
+      () async {
     final getIt = GetIt.instance;
     disposeCounter = 0;
     constructorCounter = 0;
@@ -359,7 +613,36 @@ void main() {
 
     expect(constructorCounter, 1);
 
-    getIt.unregister<TestClass>(disposingFunction: (testClass) {
+    await getIt.unregister(
+        instance: instance2,
+        disposingFunction: (dynamic testClass) async {
+          await Future.value(testClass.dispose());
+        });
+
+    expect(disposeCounter, 1);
+
+    expect(() => getIt.get<TestClass>(),
+        throwsA(const TypeMatcher<AssertionError>()));
+  });
+
+  test('unregister by type', () async {
+    final getIt = GetIt.instance;
+    disposeCounter = 0;
+    constructorCounter = 0;
+
+    getIt.registerSingleton<TestClass>(TestClass());
+
+    final instance1 = getIt.get<TestClass>();
+
+    expect(instance1 is TestClass, true);
+
+    final instance2 = getIt.get<TestClass>();
+
+    expect(instance1, instance2);
+
+    expect(constructorCounter, 1);
+
+    await getIt.unregister<TestClass>(disposingFunction: (testClass) {
       testClass.dispose();
     });
 
@@ -369,7 +652,7 @@ void main() {
         throwsA(const TypeMatcher<AssertionError>()));
   });
 
-  test('unregister by name', () {
+  test('unregister by name', () async {
     final getIt = GetIt.instance;
     disposeCounter = 0;
     constructorCounter = 0;
@@ -382,7 +665,7 @@ void main() {
 
     expect(instance1 is TestClass, true);
 
-    getIt.unregister<TestClass>(
+    await getIt.unregister<TestClass>(
         instanceName: 'instanceName',
         disposingFunction: (testClass) {
           testClass.dispose();
@@ -398,7 +681,7 @@ void main() {
         const TypeMatcher<TestClass2>());
   });
 
-  test('unregister by instance without disposing function', () {
+  test('unregister by instance without disposing function', () async {
     final getIt = GetIt.instance;
     disposeCounter = 0;
     constructorCounter = 0;
@@ -415,7 +698,7 @@ void main() {
 
     expect(constructorCounter, 1);
 
-    getIt.unregister(instance: instance2);
+    await getIt.unregister(instance: instance2);
 
     expect(disposeCounter, 0);
 
@@ -423,7 +706,7 @@ void main() {
         throwsA(const TypeMatcher<AssertionError>()));
   });
 
-  test('unregister by type without disposing function', () {
+  test('unregister by type without disposing function', () async {
     final getIt = GetIt.instance;
     disposeCounter = 0;
     constructorCounter = 0;
@@ -440,7 +723,7 @@ void main() {
 
     expect(constructorCounter, 1);
 
-    getIt.unregister<TestClass>();
+    await getIt.unregister<TestClass>();
 
     expect(disposeCounter, 0);
 
@@ -448,7 +731,34 @@ void main() {
         throwsA(const TypeMatcher<AssertionError>()));
   });
 
-  test('unregister by name without disposing function', () {
+  test(
+      'unregister by type without disposing function function but with implementing Disposable',
+      () async {
+    final getIt = GetIt.instance;
+    disposeCounter = 0;
+    constructorCounter = 0;
+
+    getIt.registerSingleton<TestClassDisposable>(TestClassDisposable());
+
+    final instance1 = getIt.get<TestClassDisposable>();
+
+    expect(instance1 is TestClassDisposable, true);
+
+    final instance2 = getIt.get<TestClassDisposable>();
+
+    expect(instance1, instance2);
+
+    expect(constructorCounter, 1);
+
+    await getIt.unregister<TestClassDisposable>();
+
+    expect(disposeCounter, 1);
+
+    expect(() => getIt.get<TestClassDisposable>(),
+        throwsA(const TypeMatcher<AssertionError>()));
+  });
+
+  test('unregister by name without disposing ', () async {
     final getIt = GetIt.instance;
     disposeCounter = 0;
     constructorCounter = 0;
@@ -459,7 +769,7 @@ void main() {
 
     expect(instance1 is TestClass, true);
 
-    getIt.unregister<TestClass>(instanceName: 'instanceName');
+    await getIt.unregister<TestClass>(instanceName: 'instanceName');
 
     expect(disposeCounter, 0);
 
@@ -478,10 +788,19 @@ void main() {
 
     expect(instance1 is TestClass, true);
   });
+  test('GenericType test', () {
+    GetIt.I.registerSingleton<TestBaseClassGeneric<TestBaseClass>>(
+        TestClassGeneric<TestBaseClass>());
+
+    final instance1 = GetIt.I.get<TestBaseClassGeneric<TestBaseClass>>();
+
+    expect(instance1 is TestClassGeneric<TestBaseClass>, true);
+  });
+
   test('register LazySingleton with lambda and factory function', () {
     GetIt.I.registerLazySingleton(() => SingletonInjector.configuration());
 
-    final instance = GetIt.I<Injector>();
+    final Injector instance = GetIt.I<Injector>();
 
     expect(instance, const TypeMatcher<Injector>());
   });
