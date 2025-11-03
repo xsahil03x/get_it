@@ -1,11 +1,30 @@
+// ignore_for_file: avoid_print
+
 library get_it;
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:async/async.dart';
 import 'package:collection/collection.dart' show IterableExtension;
+import 'package:meta/meta.dart';
 
 part 'get_it_impl.dart';
+
+/// You will see a rather esoteric looking test `(const Object() is! T)` at several places.
+/// It tests if [T] is a real type and not Object or dynamic.
+
+/// For each registered factory/singleton an [ObjectRegistration<T>] is created
+/// it holds either the instance of a Singleton or/and the creation functions
+/// for creating an instance when [get] is called
+///
+/// There are three different types:
+enum ObjectRegistrationType {
+  alwaysNew, // factory which means on every call of [get] a new instance is created
+  constant, // normal singleton
+  lazy, // lazy
+  cachedFactory, // cached factory
+}
 
 /// If your singleton that you register wants to use the manually signalling
 /// of its ready state, it can implement this interface class instead of using
@@ -19,15 +38,15 @@ abstract class WillSignalReady {}
 /// It also will get notified if the shadowing object is removed from GetIt
 ///
 /// This can be helpful to unsubscribe / resubscribe from Streams or Listenables
-abstract class ShadowChangeHandlers {
+abstract mixin class ShadowChangeHandlers {
   void onGetShadowed(Object shadowing);
   void onLeaveShadow(Object shadowing);
 }
 
 /// If objects that are registered inside GetIt implements [Disposable] the
 /// [onDispose] method will be called whenever that Object is unregistered,
-/// resetted or its enclosing Scope is popped
-abstract class Disposable {
+/// reset or its enclosing Scope is popped
+abstract mixin class Disposable {
   FutureOr onDispose();
 }
 
@@ -36,10 +55,7 @@ typedef FactoryFunc<T> = T Function();
 
 /// For Factories that expect up to two parameters if you need only one use `void` for the one
 /// you don't use
-typedef FactoryFuncParam<T, P1, P2> = T Function(
-  P1 param1,
-  P2 param2,
-);
+typedef FactoryFuncParam<T, P1, P2> = T Function(P1 param1, P2 param2);
 
 /// Signature of the factory function used by async factories
 typedef FactoryFuncAsync<T> = Future<T> Function();
@@ -59,7 +75,7 @@ typedef FactoryFuncParamAsync<T, P1, P2> = Future<T> Function(
 );
 
 /// Data structure used to identify a dependency by type and instanceName
-class InitDependency extends Type {
+class InitDependency implements Type {
   final Type type;
   final String? instanceName;
 
@@ -83,39 +99,52 @@ class WaitingTimeOutException implements Exception {
   /// Lists with Types that are already ready.
   final List<String> areReady;
 
-  WaitingTimeOutException(
-    this.areWaitedBy,
-    this.notReadyYet,
-    this.areReady,
-  );
-
-  // todo : assert(areWaitedBy != null && notReadyYet != null && areReady != null);
+  WaitingTimeOutException(this.areWaitedBy, this.notReadyYet, this.areReady);
 
   @override
   String toString() {
-    // ignore: avoid_print
     print(
-        'GetIt: There was a timeout while waiting for an instance to signal ready');
-    // ignore: avoid_print
+      'GetIt: There was a timeout while waiting for an instance to signal ready',
+    );
     print('The following instance types where waiting for completion');
     for (final entry in areWaitedBy.entries) {
-      // ignore: avoid_print
       print('${entry.value} is waiting for ${entry.key}');
     }
-    // ignore: avoid_print
     print('The following instance types have NOT signalled ready yet');
     for (final entry in notReadyYet) {
-      // ignore: avoid_print
       print(entry);
     }
-    // ignore: avoid_print
     print('The following instance types HAVE signalled ready yet');
     for (final entry in areReady) {
-      // ignore: avoid_print
       print(entry);
     }
     return super.toString();
   }
+}
+
+abstract class ObjectRegistration<T extends Object> {
+  ObjectRegistrationType get registrationType;
+
+  /// In case of a named registration the instance name is here stored for easy access
+  String? get instanceName;
+
+  /// true if one of the async registration functions have been used
+  bool get isAsync;
+
+  /// If an existing Object gets registered or an async/lazy Singleton has finished
+  /// its creation, it is stored here
+  Object? get instance;
+
+  /// the type that was used when registering, used for runtime checks
+  Type get registeredWithType;
+
+  bool get isReady;
+
+  bool get isNamedRegistration => instanceName != null;
+
+  String get debugName => '$instanceName : $registeredWithType';
+
+  bool get canBeWaitedFor;
 }
 
 /// Very simple and easy to use service locator
@@ -146,28 +175,163 @@ abstract class GetIt {
     return _GetItImplementation();
   }
 
+  // If this is set to true do not print errors
+  // By default in release mode we don't print errors
+  static bool noDebugOutput = false;
+
   /// By default it's not allowed to register a type a second time.
   /// If you really need to you can disable the asserts by setting[allowReassignment]= true
   bool allowReassignment = false;
+
+  /// By default it's throws error when [allowReassignment]= false. and trying to register same type
+  /// If you really need, you can disable the Asserts / Error by setting[skipDoubleRegistration]= true
+  @visibleForTesting
+  bool skipDoubleRegistration = false;
+
+  /// Till V7.6.7 GetIt didn't allow to register multiple instances of the same type.
+  /// if you want to register multiple instances of the same type you can enable this
+  /// and use `getAll()` to retrieve all instances of that parent type
+  void enableRegisteringMultipleInstancesOfOneType();
+
+  @visibleForTesting
+  bool allowRegisterMultipleImplementationsOfoneType = false;
 
   /// retrieves or creates an instance of a registered type [T] depending on the registration
   /// function used for this type or based on a name.
   /// for factories you can pass up to 2 parameters [param1,param2] they have to match the types
   /// given at registration with [registerFactoryParam()]
+  /// [type] if you want to get an instance by a Type object instead of a generic parameter.This should
+  /// rarely be needed but can be useful if you have a runtime type and want to get an instance
   T get<T extends Object>({
-    String? instanceName,
     dynamic param1,
     dynamic param2,
+    String? instanceName,
+    Type? type,
+  });
+
+  /// like [get] but returns null if the instance is not found
+  T? maybeGet<T extends Object>({
+    dynamic param1,
+    dynamic param2,
+    String? instanceName,
+    Type? type,
   });
 
   /// Returns a Future of an instance that is created by an async factory or a Singleton that is
   /// not ready with its initialization.
   /// for async factories you can pass up to 2 parameters [param1,param2] they have to match the
   /// types given at registration with [registerFactoryParamAsync()]
+  /// [type] if you want to get an instance by a Type object instead of a generic parameter.This should
+  /// rarely be needed but can be useful if you have a runtime type and want to get an instance
   Future<T> getAsync<T extends Object>({
     String? instanceName,
     dynamic param1,
     dynamic param2,
+    Type? type,
+  });
+
+  /// The returned `Iterable` will then contain all registered instances of the requested interface [T] with or without an instance name.
+  /// if the registrations are factories they will each be called with the provided parameters [param1,param2] and
+  /// the results will be returned in the Iterable.
+  ///
+  /// **Scope Parameters:**
+  /// - Default (no params): searches current scope only
+  /// - [fromAllScopes]: if true, searches all scopes
+  /// - [onlyInScope]: searches only the named scope (takes precedence over [fromAllScopes])
+  ///
+  /// Throws [StateError] if [onlyInScope] scope doesn't exist.
+  Iterable<T> getAll<T extends Object>({
+    dynamic param1,
+    dynamic param2,
+    bool fromAllScopes = false,
+    String? onlyInScope,
+  });
+
+  /// The returned `Future<Iterable>` will then contain all registered async registrations of the requested interface [T] with or without an instance name.
+  /// if the registrations are factories they will each be called with the provided parameters [param1,param2] and
+  /// the results will be returned in the Iterable.
+  ///
+  /// **Scope Parameters:**
+  /// - Default (no params): searches current scope only
+  /// - [fromAllScopes]: if true, searches all scopes
+  /// - [onlyInScope]: searches only the named scope (takes precedence over [fromAllScopes])
+  ///
+  /// Throws [StateError] if [onlyInScope] scope doesn't exist.
+  Future<Iterable<T>> getAllAsync<T extends Object>({
+    dynamic param1,
+    dynamic param2,
+    bool fromAllScopes = false,
+    String? onlyInScope,
+  });
+
+  /// Returns a list of all registered instances that match type [T].
+  ///
+  /// **Performance Note:** Unlike get_it's O(1) Map-based lookups, this method performs
+  /// an O(n) linear search through all registrations. Use sparingly in performance-critical code.
+  /// Performance can be improved by limiting the search to a single scope using [onlyInScope].
+  ///
+  /// [includeSubtypes] if true (default), matches T and all subtypes.
+  ///                   if false, matches only exact type T.
+  ///                   Note: exact type matching only works with registration type matching.
+  ///
+  /// **Scope Parameters:**
+  /// - Default (no params): searches current scope only
+  /// - [inAllScopes]: if true, searches all scopes
+  /// - [onlyInScope]: searches only the named scope (takes precedence over [inAllScopes])
+  ///
+  /// **Matching Strategy:**
+  /// - [includeMatchedByRegistrationType]: if true (default), includes registrations where
+  ///   the registered type is a subtype of T (no instance needed, works for lazy singletons/factories)
+  /// - [includeMatchedByInstance]: if true (default), includes registrations where the
+  ///   actual instance type is a subtype of T (requires instance to exist)
+  ///
+  /// **Side Effects (only when includeMatchedByRegistrationType=true):**
+  /// - [instantiateLazySingletons]: if true, instantiates lazy singletons that match to include them
+  /// - [callFactories]: if true, calls factories that match to include their instances
+  ///
+  /// **Validation:**
+  /// - [includeSubtypes]=false requires [includeMatchedByInstance]=false
+  ///   (runtime type checking cannot distinguish exact types from subtypes)
+  /// - [instantiateLazySingletons]=true requires [includeMatchedByRegistrationType]=true
+  /// - [callFactories]=true requires [includeMatchedByRegistrationType]=true
+  ///
+  /// Throws [StateError] if [onlyInScope] scope doesn't exist.
+  /// Throws [ArgumentError] if validation rules are violated.
+  ///
+  /// Example:
+  /// ```dart
+  /// // Register types
+  /// getIt.registerSingleton<FileOutput>(FileOutput());
+  /// getIt.registerLazySingleton<ConsoleOutput>(() => ConsoleOutput());
+  /// getIt.registerFactory<IOutput>(() => RemoteOutput());
+  ///
+  /// // Find by registration type (default)
+  /// final outputs = getIt.findAll<IOutput>();  // Returns [FileOutput] only
+  ///
+  /// // Include lazy singletons by instantiating them
+  /// final all = getIt.findAll<IOutput>(instantiateLazySingletons: true);
+  /// // Returns [FileOutput, ConsoleOutput]
+  ///
+  /// // Include factories by calling them
+  /// final withFactories = getIt.findAll<IOutput>(
+  ///   instantiateLazySingletons: true,
+  ///   callFactories: true,
+  /// ); // Returns [FileOutput, ConsoleOutput, RemoteOutput]
+  ///
+  /// // Find only by actual instance type
+  /// final instances = getIt.findAll<IOutput>(
+  ///   includeMatchedByRegistrationType: false,
+  ///   includeMatchedByInstance: true,
+  /// ); // Returns instances that implement IOutput
+  /// ```
+  List<T> findAll<T extends Object>({
+    bool includeSubtypes = true,
+    bool inAllScopes = false,
+    String? onlyInScope,
+    bool includeMatchedByRegistrationType = true,
+    bool includeMatchedByInstance = true,
+    bool instantiateLazySingletons = false,
+    bool callFactories = false,
   });
 
   /// Callable class so that you can write `GetIt.instance<MyType>` instead of
@@ -176,6 +340,7 @@ abstract class GetIt {
     String? instanceName,
     dynamic param1,
     dynamic param2,
+    Type? type,
   });
 
   /// registers a type so that a new instance will be created on each call of [get] on that type
@@ -183,8 +348,15 @@ abstract class GetIt {
   /// [factoryFunc] factory function for this type
   /// [instanceName] if you provide a value here your factory gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
   void registerFactory<T extends Object>(
+    FactoryFunc<T> factoryFunc, {
+    String? instanceName,
+  });
+
+  /// Like registerFactory but holds a weak reference to the last created instance
+  /// if the instance wasn't garbage collected yet it will return this instance instead of creating a new one
+  void registerCachedFactory<T extends Object>(
     FactoryFunc<T> factoryFunc, {
     String? instanceName,
   });
@@ -198,7 +370,7 @@ abstract class GetIt {
   /// [factoryFunc] factory function for this type that accepts two parameters
   /// [instanceName] if you provide a value here your factory gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
   ///
   /// example:
   ///    getIt.registerFactoryParam<TestClassParam,String,int>((s,i)
@@ -213,14 +385,29 @@ abstract class GetIt {
     String? instanceName,
   });
 
+  /// Like registerFactoryParam but holds a weak reference to the last created instance
+  /// if the instance wasn't garbage collected yet, and if the passed parameter haven't changed,
+  /// it will return this instance instead of creating a new one
+  void registerCachedFactoryParam<T extends Object, P1, P2>(
+    FactoryFuncParam<T, P1, P2> factoryFunc, {
+    String? instanceName,
+  });
+
   /// registers a type so that a new instance will be created on each call of [getAsync] on that type
   /// the creation function is executed asynchronously and has to be accessed with [getAsync]
   /// [T] type to register
   /// [factoryFunc] async factory function for this type
   /// [instanceName] if you provide a value here your factory gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
   void registerFactoryAsync<T extends Object>(
+    FactoryFuncAsync<T> factoryFunc, {
+    String? instanceName,
+  });
+
+  /// Like registerFactoryAsync but holds a weak reference to the last created instance
+  /// if the instance wasn't garbage collected yet it will return this instance instead of creating a new one
+  void registerCachedFactoryAsync<T extends Object>(
     FactoryFuncAsync<T> factoryFunc, {
     String? instanceName,
   });
@@ -235,7 +422,7 @@ abstract class GetIt {
   /// [factoryFunc] factory function for this type that accepts two parameters
   /// [instanceName] if you provide a value here your factory gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
   ///
   /// example:
   ///    getIt.registerFactoryParam<TestClassParam,String,int>((s,i) async
@@ -250,28 +437,65 @@ abstract class GetIt {
     String? instanceName,
   });
 
+  /// Like registerFactoryParamAsync but holds a weak reference to the last created instance
+  /// if the instance wasn't garbage collected yet, and if the passed parameter haven't changed,
+  /// it will return this instance instead of creating a new one
+  void registerCachedFactoryParamAsync<T extends Object, P1, P2>(
+    FactoryFuncParamAsync<T, P1?, P2?> factoryFunc, {
+    String? instanceName,
+  });
+
   /// registers a type as Singleton by passing an [instance] of that type
   /// that will be returned on each call of [get] on that type
   /// [T] type to register
+  /// The newly registered instance will also be returned.
   /// [instanceName] if you provide a value here your instance gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
   /// If [signalsReady] is set to `true` it means that the future you can get from `allReady()`
   /// cannot complete until this instance was signalled ready by calling
   /// [signalsReady(instance)].
-  void registerSingleton<T extends Object>(
+  T registerSingleton<T extends Object>(
     T instance, {
     String? instanceName,
     bool? signalsReady,
     DisposingFunc<T>? dispose,
   });
 
+  /// ---- With reference counting ----
+  ///
+  /// [registerSingletonIfAbsent] and [releaseInstance] are used to manage the lifecycle of
+  /// a Singleton. This is useful if you register an object when you push a Page and this page can get
+  /// pushed recursively. In that case you don't want to dispose the object when first of these pages is popped
+  ///
+
+  /// Only registers a type new as Singleton if it is not already registered. Otherwise it returns
+  /// the existing instance and increments an internal reference counter to ensure that matching
+  /// [unregister] or [releaseInstance] calls will decrement the reference counter an won't unregister
+  /// and dispose the registration as long as the reference counter is > 0.
+  /// [T] type/interface that is used for the registration and the access via [get]
+  /// [factoryFunc] that is called to create the instance if it is not already registered
+  /// [instanceName] optional key to register more than one instance of one type
+  /// [dispose] disposing function that is automatically called before the object is removed from get_it
+  T registerSingletonIfAbsent<T extends Object>(
+    T Function() factoryFunc, {
+    String? instanceName,
+    DisposingFunc<T>? dispose,
+  });
+
+  /// checks if a registered Singleton has an reference counter > 0
+  /// if so it decrements the reference counter and if it reaches 0 it
+  /// unregisters the Singleton
+  /// if called on an object that's reference counter was never incremented
+  /// it will immediately unregister and dispose the object
+  void releaseInstance(Object instance);
+
   /// registers a type as Singleton by passing a factory function of that type
   /// that will be called when all dependent Singletons are ready
   /// [T] type to register
   /// [instanceName] if you provide a value here your instance gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
   /// [dependsOn] if this instance depends on other registered Singletons before it can be
   /// initialized you can either orchestrate this manually using [isReady()] or pass a list of
   /// the types that the instance depends on here. [factoryFunc] won't get executed till this
@@ -281,7 +505,7 @@ abstract class GetIt {
   void registerSingletonWithDependencies<T extends Object>(
     FactoryFunc<T> factoryFunc, {
     String? instanceName,
-    Iterable<Type>? dependsOn,
+    required Iterable<Type>? dependsOn,
     bool? signalsReady,
     DisposingFunc<T>? dispose,
   });
@@ -295,7 +519,7 @@ abstract class GetIt {
   /// (see below). As soon as it returns, this instance is marked as ready unless you don't
   /// set [signalsReady==true] [instanceName] if you provide a value here your instance gets
   /// registered with that name instead of a type. This should only be necessary if you need to
-  /// register more than one instance of one type. Its highly not recommended.
+  /// register more than one instance of one type.
   /// [dependsOn] if this instance depends on other registered Singletons before it can be
   /// initialized you can either orchestrate this manually using [isReady()] or pass a list of
   /// the types that the instance depends on here. [factoryFunc] won't get executed till this
@@ -309,6 +533,7 @@ abstract class GetIt {
     Iterable<Type>? dependsOn,
     bool? signalsReady,
     DisposingFunc<T>? dispose,
+    void Function(T instance)? onCreated,
   });
 
   /// registers a type as Singleton by passing a factory function that will be called
@@ -317,13 +542,19 @@ abstract class GetIt {
   /// [factoryFunc] factory function for this type
   /// [instanceName] if you provide a value here your factory gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
+  /// [onCreated] optional callback that will be called after the instance has been created
+  /// (when first accessed). This can be useful for logging, analytics, or post-creation setup.
+  /// If this callback throws an error, it will be caught and logged but won't prevent
+  /// the instance from being created.
   /// [registerLazySingleton] does not influence [allReady] however you can wait
   /// for and be dependent on a LazySingleton.
   void registerLazySingleton<T extends Object>(
     FactoryFunc<T> factoryFunc, {
     String? instanceName,
     DisposingFunc<T>? dispose,
+    void Function(T instance)? onCreated,
+    bool useWeakReference = false,
   });
 
   /// registers a type as Singleton by passing an async factory function that will be called
@@ -338,27 +569,62 @@ abstract class GetIt {
   /// You can wait/check if the instance is ready by using [isReady()] and [isReadySync()].
   /// [instanceName] if you provide a value here your instance gets registered with that
   /// name instead of a type. This should only be necessary if you need to register more
-  /// than one instance of one type. Its highly not recommended.
+  /// than one instance of one type.
+  /// [onCreated] optional callback that will be called after the instance has been created
+  /// (when first accessed). This can be useful for logging, analytics, or post-creation setup.
+  /// If this callback throws an error, it will be caught and logged but won't prevent
+  /// the instance from being created.
   /// [registerLazySingletonAsync] does not influence [allReady] however you can wait
   /// for and be dependent on a LazySingleton.
   void registerLazySingletonAsync<T extends Object>(
     FactoryFuncAsync<T> factoryFunc, {
     String? instanceName,
     DisposingFunc<T>? dispose,
+    void Function(T instance)? onCreated,
+    bool useWeakReference = false,
   });
 
-  /// Tests if an [instance] of an object or aType [T] or a name [instanceName]
-  /// is registered inside GetIt
-  bool isRegistered<T extends Object>({Object? instance, String? instanceName});
+  /// find the first registration that matches the type [T]/[instanceName] or the [instance]
+  ObjectRegistration? findFirstObjectRegistration<T extends Object>({
+    Object? instance,
+    String? instanceName,
+  });
 
-  /// Clears all registered types. Handy when writing unit tests
+  /// Tests if an [instance] of an object or a Type ([T] or [type]) or a name [instanceName]
+  /// is registered inside GetIt
+  bool isRegistered<T extends Object>({
+    Object? instance,
+    String? instanceName,
+    Type? type,
+  });
+
+  /// In some cases it can be necessary to change the name of a registered instance
+  /// This avoids to unregister and reregister the instance which might cause trouble
+  /// with disposing functions.
+  /// IMPORTANT: This will only change the the first instance that is found while
+  /// searching the scopes.
+  /// If the new name is already in use in the current scope it will throw a
+  /// StateError
+  /// [instanceName] the current name of the instance
+  /// [newInstanceName] the new name of the instance
+  /// [instance] the instance itself that can be used instead of
+  /// providing the type and the name. If [instance] is null the type and the name
+  /// have to be provided
+  void changeTypeInstanceName<T extends Object>({
+    String? instanceName,
+    required String newInstanceName,
+    T? instance,
+  });
+
+  /// Clears all registered types in the reverse order in which they were registered.
+  /// Handy when writing unit tests or when disposing services that depend on each other.
   /// If you provided dispose function when registering they will be called
   /// [dispose] if `false` it only resets without calling any dispose
   /// functions
   /// As dispose functions can be async, you should await this function.
   Future<void> reset({bool dispose = true});
 
-  /// Clears all registered types for the current scope
+  /// Clears all registered types for the current scope in the reverse order of registering them.
   /// If you provided dispose function when registering they will be called
   /// [dispose] if `false` it only resets without calling any dispose
   /// functions
@@ -374,10 +640,15 @@ abstract class GetIt {
   /// is still valid while it is executed
   /// [init] optional function to register Objects immediately after the new scope is
   /// pushed. This ensures that [onScopeChanged] will be called after their registration
+  /// if [isFinal] is set to true, you can't register any new objects in this scope after
+  /// this call. In Other words you have to register the objects for this scope inside
+  /// [init] if you set [isFinal] to true. This is useful if you want to ensure that
+  /// no new objects are registered in this scope by accident which could lead to race conditions
   void pushNewScope({
     void Function(GetIt getIt)? init,
     String? scopeName,
     ScopeDisposeFunc? dispose,
+    bool isFinal,
   });
 
   /// Creates a new registration scope. If you register types after creating
@@ -410,6 +681,19 @@ abstract class GetIt {
   /// If no scope with [name] exists, nothing is popped and `false` is returned
   Future<bool> popScopesTill(String name, {bool inclusive = true});
 
+  /// Disposes all registered factories and singletons in the provided scope
+  /// (in the reverse order in which they were registered),
+  /// then destroys (drops) the scope. If the dropped scope was the last one,
+  /// the previous scope becomes active again.
+  /// if you provided dispose functions on registration, they will be called.
+  /// if you passed a dispose function when you pushed this scope it will be
+  /// called before the scope is dropped.
+  /// As dispose functions can be async, you should await this function.
+  Future<void> dropScope(String scopeName);
+
+  /// Tests if the scope by name [scopeName] is registered in GetIt
+  bool hasScope(String scopeName);
+
   /// Returns the name of the current scope if it has one otherwise null
   /// if you are already on the baseScope it returns 'baseScope'
   String? get currentScopeName;
@@ -428,14 +712,95 @@ abstract class GetIt {
     FutureOr Function(T)? disposingFunction,
   });
 
+  /// Resets all lazy singletons that have been instantiated.
+  ///
+  /// This method finds all lazy singleton registrations that have been instantiated
+  /// and resets them, clearing their instances. The next time [get] is called
+  /// for these types, new instances will be created.
+  ///
+  /// **Scope Parameters:**
+  /// - Default (no params): resets lazy singletons in current scope only
+  /// - [inAllScopes]: if true, resets lazy singletons across all scopes
+  /// - [onlyInScope]: resets lazy singletons only in the named scope (takes precedence over [inAllScopes])
+  ///
+  /// If [dispose] is true (default), the dispose function (if provided during registration)
+  /// will be called on each instance before resetting. For objects implementing [Disposable],
+  /// their [onDispose] method will be called.
+  ///
+  /// This is particularly useful in testing scenarios or when you need to reset state
+  /// within a specific scope without popping the entire scope.
+  ///
+  /// Throws [StateError] if [onlyInScope] scope doesn't exist.
+  ///
+  /// Example:
+  /// ```dart
+  /// // Push a scope and register lazy singletons
+  /// getIt.pushNewScope();
+  /// getIt.registerLazySingleton<CacheService>(() => CacheService());
+  /// getIt.registerLazySingleton<UserService>(() => UserService());
+  ///
+  /// // Access services (creates instances)
+  /// final cache = getIt<CacheService>();
+  /// final user = getIt<UserService>();
+  ///
+  /// // Reset all lazy singletons in current scope
+  /// await getIt.resetLazySingletons();
+  ///
+  /// // Reset lazy singletons in all scopes
+  /// await getIt.resetLazySingletons(inAllScopes: true);
+  ///
+  /// // Reset lazy singletons in specific scope
+  /// await getIt.resetLazySingletons(onlyInScope: 'myScope');
+  ///
+  /// // Next access will create fresh instances
+  /// final newCache = getIt<CacheService>(); // New instance
+  /// ```
+  Future<void> resetLazySingletons({
+    bool dispose = true,
+    bool inAllScopes = false,
+    String? onlyInScope,
+  });
+
+  /// Checks if a lazy singleton instance has been created and exists.
+  ///
+  /// This method verifies whether a lazy singleton of type [T] (optionally identified by [instanceName])
+  /// has been instantiated. Lazy singletons are only created when first accessed via [get].
+  ///
+  /// Returns `true` if the instance has been created and exists, `false` if it hasn't been created yet.
+  ///
+  /// Throws a [StateError] if the type [T] is not registered as a lazy singleton in GetIt.
+  ///
+  /// Example:
+  /// ```dart
+  /// // Register a lazy singleton
+  /// getIt.registerLazySingleton<MyService>(() => MyService());
+  ///
+  /// // Check if instance exists (will return false initially)
+  /// bool exists = getIt.checkLazySingletonInstanceExists<MyService>();
+  ///
+  /// // Access the instance (creates it)
+  /// MyService service = getIt<MyService>();
+  ///
+  /// // Check again (will return true now)
+  /// exists = getIt.checkLazySingletonInstanceExists<MyService>();
+  /// ```
+  bool checkLazySingletonInstanceExists<T extends Object>({
+    String? instanceName,
+  });
+
   /// Unregister an [instance] of an object or a factory/singleton by Type [T] or by name
   /// [instanceName] if you need to dispose any resources you can do it using
   /// [disposingFunction] function that provides an instance of your class to be disposed.
   /// This function overrides the disposing you might have provided when registering.
+  /// If you have enabled reference counting when registering, [unregister] will only unregister and dispose the object
+  /// if referenceCount is 0
+  /// [ignoreReferenceCount] if `true` it will ignore the reference count and unregister the object
+  /// only use this if you know what you are doing
   FutureOr unregister<T extends Object>({
     Object? instance,
     String? instanceName,
     FutureOr Function(T)? disposingFunction,
+    bool ignoreReferenceCount = false,
   });
 
   /// returns a Future that completes if all asynchronously created Singletons and any
@@ -466,10 +831,7 @@ abstract class GetIt {
 
   /// Checks if an async Singleton defined by an [instance], a type [T] or an [instanceName]
   /// is ready without waiting
-  bool isReadySync<T extends Object>({
-    Object? instance,
-    String? instanceName,
-  });
+  bool isReadySync<T extends Object>({Object? instance, String? instanceName});
 
   /// Returns if all async Singletons are ready without waiting
   /// if [allReady] should not wait for the completion of async Singletons set

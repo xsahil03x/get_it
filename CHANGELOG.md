@@ -1,9 +1,170 @@
+## [9.0.5] - 2025-01-12
+
+* Use absolute GitHub URL for logo in README
+
+## [9.0.4] - 2025-01-12
+
+* Fixed screenshots description to match working 9.0.1 format
+
+## [9.0.3] - 2025-01-12
+
+* Fixed logo display on pub.dev by using relative path
+
+## [9.0.2] - 2025-01-12
+
+* Fixed button sizing in README for pub.dev display
+
+## [9.0.1]
+
+* Fixed linter error (missing trailing comma in test file)
+
+## [9.0.0] - BREAKING CHANGE
+
+* **BREAKING**: Disposal order now always follows strict LIFO (Last-In-First-Out) based on registration order
+  * Previously, disposal order was based on the order objects appeared in internal hash maps, which was unpredictable when mixing named and unnamed registrations
+  * Now all disposals are sorted by `registrationNumber` (a sequential counter assigned during registration) ensuring true LIFO order
+  * The `strictDisposalOrder` parameter has been removed from `reset()`, `resetScope()`, `popScope()`, `popScopesTill()`, and `dropScope()` methods
+  * Performance impact is minimal: ~8% overhead for 10,000 registrations (approximately 2-3ms), negligible for typical applications
+  * This change ensures correctness and predictability in dependency cleanup, which is more important than the minor performance cost
+  * **Impact on existing apps**: If your app's behavior relies on the previous imperfect reverse disposal order, there is likely a design issue in your dependency structure that should be addressed
+* Fixed bug in `registerCachedFactoryParamAsync` where calling `getAsync` would fail with null error because it was checking the wrong function parameter (sync `creationFunctionParam` instead of `asyncCreationFunctionParam`)
+
+## [8.3.0]
+
+* Added `findAll()` method for finding all registered instances by type with flexible matching options (subtypes, interfaces, scope filtering)
+* Added `resetLazySingletons()` method to reset multiple lazy singletons at once with optional scope parameters
+* Added `onCreated` callback parameter to `registerLazySingleton`, `registerLazySingletonAsync`, and `registerSingletonAsync` for lifecycle hooks
+* Improved parameter validation error messages in debug mode - now provides clear, actionable feedback when wrong parameter types are passed to factories
+* Fixed bug in cached factories where parameter validation could throw unhelpful errors
+
+## [8.2.0]
+
+Thanks to PR by @Hu-Wentao we now expose part of the internal state of get_it so tool authors have more options. While doing so internal renaming has happened, so where previously where the term "ServiceFactory" was uses we not use consistently `ObjectRegistration` and instead of variables with `factory` in the name we use `registration` this has not impact on the public API so it is not a breaking change.
+
+## [8.1.0]
+
+* adding documentation https://github.com/flutter-it/get_it/issues/411
+* registerCachedFactoryAsync usded FactoryFunc instead of FactoryFuncAsync https://github.com/flutter-it/get_it/issues/410
+* adding `getMaybe` which will return `null` instead of throwing an exception in case a type is not registered
+* `dependsOn` of `registerSingletonWithDependencies` is now required. Although this could be seen as a breaking change, if you didn't pass `dependsOn` your code wouldn't have worked before so I won't define this as breaking change
+
+
+## [8.0.3]
+
+* fixing linter warning thanks to @PatrickChrestin
+
+## [8.0.2]
+
+* Fixes by @kuhnroyal and  @ArtAhmetajCR who spotted some flaws in my latest changes. Thanks a lot
+
+## [8.0.1]
+
+* Bugfixes and improvements for certain edge cases thanks to @KnightOfBlackLily and @kuhnroyal 
+
+## [8.0.0]
+
+* official new release with all the changes
+
+## [8.0.0-pre-7] - 12.08.2024 
+
+* adding cachedFatories and better scope protection against race conditions
+
+## [8.0.0-pre-6] - 11.08.2024 
+
+* testing weak references in lazySingeltons
+
+## [8.0.0-pre-5] - 25.06.2024 
+
+* adding `changeTypeInstanceName`
+
+## [8.0.0-pre-4] - 03.06.2024 
+
+* fixing bug in `unregister` that happened if you tried to unregister a named registration by providing an instance instead of the type and the instance name
+
+## [8.0.0-pre-3] - 31.05.2024
+
+* releaseInstance will now throw if the instance isn't registered
+
+## [8.0.0-pre-2] - 29.05.2024 
+
+* fixing negative reference count
+
+## [8.0.0-pre-1] - 26.05.2024 
+
+* `getAll()` and `getAllAsync()` now have a `fromAllScopes` parameter.
+* adding safeguards according to https://github.com/fluttercommunity/get_it/issues/364 to make it impossible to call `push/popScope` while the `init()` function of another pushScope is running.
+* fixed an unsafe type check when using a runtime type to access an object in get_it.
+
+## [7.7.0] - 15.04.2024 
+
+* thanks to the PR by @kasefuchs https://github.com/fluttercommunity/get_it/pull/361 `getAll` is now available in an async version too.
+
+## [7.6.9] - 11.04.2024
+
+* fig for bug that was introduced in 7.6.8 https://github.com/fluttercommunity/get_it/issues/358
+
+## [7.6.8] - 03.04.2024
+
+* merged PR by @venkata-reddy-dev https://github.com/fluttercommunity/get_it/pull/356 adding new `skipDoubleRegistration` flag for testing
+
+## [7.6.7] - 18.01.2024
+
+* merged PR by @subzero911  https://github.com/fluttercommunity/get_it/pull/330
+
+## [7.6.6] - 04.01.2024
+
+* Thanks to PR by @bvoq `getIt.reset, getIt.popScope, getIt.dropScope` now dispose registered objects in the reverse order in which they were registered.
+
+## [7.6.5] - 25.09.2023
+
+* updated Discord link
+
+## [7.6.4] - 04.09.2023
+
+* fixed the throwing of a StateError that was previously thrown as String
+
+## [7.6.3] - 04.09.2023
+
+* push new version because pub didn't list this one
+
+## [7.6.2] - 31.08.2023
+
+* fix linter error
+
+## [7.6.1] - 31.08.2023
+
+* added `isFinal` scope parameter which fixes https://github.com/fluttercommunity/get_it/issues/326
+* version bump of dependencies and updates readme
+
+## [7.6.0] - 09.05.2023
+
+* merged PR by lacopiroty https://github.com/fluttercommunity/get_it/pull/297 which now allows to access objects inside GetIt by runtime type too like
+```Dart
+    getIt.registerSingleton(TestClass());
+
+    final instance1 = getIt.get(type: TestClass);
+
+    expect(instance1 is TestClass, true);
+```
+* fix for https://github.com/fluttercommunity/get_it/issues/299 
+* fix for https://github.com/fluttercommunity/get_it/issues/300    
+
+
+## [7.5.0] - 07.05.2023
+
+* new function `dropScope(scopeName)` which allows to remove and dispose any named scope even if it's not the top one. Great PR by @olexale https://github.com/fluttercommunity/get_it/pull/292 which fixes sort of race conditions if you create scopes just for the life time of a widget. 
+## [7.4.1]
+* PR from @dzziwny which fixed an edge case with LazySingletons https://github.com/fluttercommunity/get_it/pull/284
+* Changed an assertion in case that an object is not registered to an Exception that also will throw in real time so that you get meaningful errors based on https://github.com/fluttercommunity/get_it/issues/312
+
+## [7.4.0]
+* `registerSingleton` now returns the passed instance as a return value thanks to the PR by @Rexios80 https://github.com/fluttercommunity/get_it/pull/242
+* In some cases GetIt will print error messages to the debug output. Now this won't happen anymore in release mode and can be completely disabled by setting `GetIt.noDebugOutput=true` following the PR from @James1345 
 ## [7.3.0]
 
 New features:
 * `popScopeTil` got a new optional `inclusive` parameter so you can now decide if scope with the passed name should be popped too or only the ones above
 * PR by @jtdLab that adds to reset a LazySingleton by providing an existing instance
-
 * Fix for an internal state error by @ioantsaf 
 * Fix for a rare edge case if you manually `signalReady`
 * Many PRs with improvements to spelling and grammar of readme, source documentation and even one assert message by @selcukguvel @isinghmitesh @UsamaKarim @nilsreichardt and  Os-Prog
@@ -21,12 +182,15 @@ New features:
 
 * fixed bug with manual synchronization of SingletonsWithDependencies 
 https://github.com/fluttercommunity/get_it/issues/196
+
 ## [7.1.3] - 07.05.2021
 
 * Fix for https://github.com/fluttercommunity/get_it/issues/186
+
 ## [7.1.2] - 06.05.2021
 
 * Thanks to the clever PR https://github.com/fluttercommunity/get_it/pull/185 by @kmartins `unregister` and `resetLazySingleton` now only have to be awaited if you use an async disposal function.
+
 ## [7.1.1] - 05.05.2021
 
 * `pushNewScope()` now got an optional `init` parameter where you can pass a function that registers new objects inside the newly pushed Scope. Doing the registration in this function ensures that the `onScopeChanged` call-back is called after the objects are registered.
@@ -48,7 +212,7 @@ The getit_mixin has a matching `rebuiltOnScopeChange` method.
 ```
 ## [7.0.0] - 02.05.2021
 
-This is a breaking change because there were some inconsistencies in the handling of the disposal functions that you can pass when registering an Object, pop a Scope or use `unregister()`  `resetLazySingleton()`´.  Some of accepted a `FutureOr` method type, others just a `void` which meant you couldn't use async functions consistently. With this release you can use async functions in all disposal functions which unfortunately also required to change the signatures of the following functions:
+This is a breaking change because there were some inconsistencies in the handling of the disposal functions that you can pass when registering an Object, pop a Scope or use `unregister()`  `resetLazySingleton()`.  Some of accepted a `FutureOr` method type, others just a `void` which meant you couldn't use async functions consistently. With this release you can use async functions in all disposal functions which unfortunately also required to change the signatures of the following functions:
 
 ```dart
   Future<void> reset({bool dispose = true});
@@ -98,9 +262,11 @@ When the Object is shadowed its `onGetShadowed()` method is called with the obje
 
 
  * Thanks to this PR https://github.com/fluttercommunity/get_it/pull/181 by @n3wtron you can now also make objects depend on other objects not only by type but also by type and name if you used a named registration
+
 ## [6.1.1] - 13.04.2021
 
 * small fix in getAsync with parameters
+
 ## [6.1.0] - 12.04.2021
 
 * Exceptions that occur during an async initialisation are now forwarded to the future that `allReady()` returns instead to get swallowed https://github.com/fluttercommunity/get_it/issues/148
@@ -110,6 +276,7 @@ When the Object is shadowed its `onGetShadowed()` method is called with the obje
 ## [6.0.0] - 15.02.2021
 
 * Official null safety release
+
 ## [5.0.2] - 08.12.2020
 
 * fixed https://github.com/fluttercommunity/get_it/issues/138 when calling `unRegister` the dispose function

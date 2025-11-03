@@ -13,7 +13,11 @@ class AppModelImplementation extends AppModel {
 
   AppModelImplementation() {
     /// lets pretend we have to do some async initialization
-    Future.delayed(Duration(seconds: 3)).then((_) => getIt.signalReady(this));
+    /// using signalReady is not necessary in most cases
+    /// just use registerSingletonAsync instead
+    Future.delayed(
+      const Duration(seconds: 3),
+    ).then((_) => getIt.signalReady(this));
   }
 
   @override
